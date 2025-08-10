@@ -359,7 +359,7 @@ const MainContent = ({ items, viewContext, permissions, onFolderSelect, onFileUp
                             <th className="p-2 w-16"></th>
                             <th className="p-2">이름</th>
                             <th className="p-2">경로</th>
-                            <th className="p-2">수정한 날짜</th>
+                            <th className="p-2">생성한 날짜</th>
                             <th className="p-2">생성자</th>
                         </tr>
                         </thead>
@@ -396,7 +396,7 @@ const MainContent = ({ items, viewContext, permissions, onFolderSelect, onFileUp
                             </th>
                             <th className="p-2">
                                 <button onClick={() => requestSort('modifiedAt')} className="group flex items-center font-semibold w-full px-2 py-1 rounded-md hover:bg-gray-100 transition-colors">
-                                    수정한 날짜
+                                    생성한 날짜
                                     <span className={sortConfig.key === 'modifiedAt' ? '' : 'opacity-0 group-hover:opacity-100'}>
                                             <SortIcon direction={sortConfig.key === 'modifiedAt' ? sortConfig.direction : 'ascending'} />
                                         </span>
