@@ -9,10 +9,6 @@ import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
 
-/**
- * Entity for storing file metadata.
- * The actual file content is stored in the local file system.
- */
 @Entity
 @Getter
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
@@ -48,9 +44,13 @@ public class FileEntity {
     @Column(name = "created_at", nullable = false, updatable = false)
     private LocalDateTime createdAt;
 
-    // This mapping allows accessing all versions associated with this file.
     @OneToMany(mappedBy = "file", cascade = CascadeType.ALL, orphanRemoval = true)
     private List<FileVersion> versions = new ArrayList<>();
+
+    // 파일의 '현재 내용'으로 간주될 활성 버전을 가리킴
+    @OneToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "active_version_id")
+    private FileVersion activeVersion;
 
     @Builder
     public FileEntity(User owner, Folder folder, String originalName, String storedName, Long size) {
@@ -87,4 +87,9 @@ public class FileEntity {
     public void setOwner(User owner) {
         this.owner = owner;
     }
+
+    public void setActiveVersion(FileVersion version) {
+        this.activeVersion = version;
+    }
+
 }

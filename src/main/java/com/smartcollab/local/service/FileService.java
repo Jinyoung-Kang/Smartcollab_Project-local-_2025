@@ -86,7 +86,6 @@ public class FileService {
         } else {
             throw new IllegalArgumentException("업로드할 위치(폴더 또는 팀)가 지정되지 않았습니다.");
         }
-
         checkFolderPermission(parentFolder, owner);
 
         String originalName = file.getOriginalFilename();
@@ -109,31 +108,44 @@ public class FileService {
         FileVersion initialVersion = FileVersion.builder()
                 .file(savedFile)
                 .storedPath(savedFile.getStoredName())
-                .editor(owner) // 초기 업로더를 editor로 지정
+                .editor(owner)
                 .build();
         fileVersionRepository.save(initialVersion);
+
+        // 생성된 초기 버전을 파일의 '활성 버전'으로 지정
+        savedFile.setActiveVersion(initialVersion);
 
         return savedFile;
     }
 
     @Transactional(readOnly = true)
     public String getLatestFileContent(Long fileId) throws IOException {
-        FileEntity file = fileRepository.findById(fileId).orElseThrow(() -> new RuntimeException("파일을 찾을 수 없습니다."));
-        Optional<FileVersion> latestVersion = fileVersionRepository.findTopByFileOrderByVersionIdDesc(file);
-        Path filePath;
-        if (latestVersion.isPresent()) {
-            String storedPath = latestVersion.get().getStoredPath();
-            if (Files.exists(versionLocation.resolve(storedPath))) {
-                filePath = versionLocation.resolve(storedPath);
+        // '가장 최신' 버전이 아닌 '활성' 버전의 내용을 가져옴
+        FileEntity file = fileRepository.findByIdWithActiveVersion(fileId)
+                .orElseThrow(() -> new RuntimeException("파일을 찾을 수 없습니다."));
+
+        FileVersion activeVersion = file.getActiveVersion();
+        if (activeVersion == null) {
+            // 활성 버전이 없는 경우 (데이터 마이그레이션 등 예외 상황)
+            // 최초 원본 파일의 내용을 반환하거나 빈 문자열을 반환
+            Optional<FileVersion> initialVersion = fileVersionRepository.findTopByFileOrderByVersionIdAsc(file);
+            if (initialVersion.isPresent()) {
+                activeVersion = initialVersion.get();
             } else {
-                filePath = rootLocation.resolve(storedPath);
+                return ""; // 버전 정보가 전혀 없는 경우
             }
+        }
+
+        String storedPath = activeVersion.getStoredPath();
+        Path filePath;
+        if (Files.exists(versionLocation.resolve(storedPath))) {
+            filePath = versionLocation.resolve(storedPath);
         } else {
-            filePath = this.rootLocation.resolve(file.getStoredName());
+            filePath = rootLocation.resolve(storedPath);
         }
 
         if (!Files.exists(filePath)) {
-            return "";
+            return "활성 버전(" + activeVersion.getVersionId() + ")의 실제 파일을 찾을 수 없습니다.";
         }
         return Files.readString(filePath, StandardCharsets.UTF_8);
     }
@@ -152,26 +164,39 @@ public class FileService {
         FileVersion fileVersion = FileVersion.builder()
                 .file(file)
                 .storedPath(versionStoredName)
-                .editor(user) // 현재 수정자를 editor로 지정
+                .editor(user)
                 .build();
         fileVersionRepository.save(fileVersion);
+
+        // 새로 저장된 버전을 파일의 '활성 버전'으로 지정
+        file.setActiveVersion(fileVersion);
+        file.setSize(Files.size(destinationFile));
+        fileRepository.save(file);
     }
 
     @Transactional(readOnly = true)
     public Resource downloadFile(Long fileId) {
-        FileEntity file = fileRepository.findById(fileId)
+
+        // 다운로드 시에도 '활성' 버전의 파일을 제공
+        FileEntity file = fileRepository.findByIdWithActiveVersion(fileId)
                 .orElseThrow(() -> new RuntimeException("파일을 찾을 수 없습니다: " + fileId));
-        Optional<FileVersion> latestVersion = fileVersionRepository.findTopByFileOrderByVersionIdDesc(file);
-        Path filePath;
-        if (latestVersion.isPresent()) {
-            String storedPath = latestVersion.get().getStoredPath();
-            if (Files.exists(versionLocation.resolve(storedPath))) {
-                filePath = versionLocation.resolve(storedPath).normalize();
+
+        FileVersion activeVersion = file.getActiveVersion();
+        if (activeVersion == null) {
+            Optional<FileVersion> initialVersion = fileVersionRepository.findTopByFileOrderByVersionIdAsc(file);
+            if (initialVersion.isPresent()) {
+                activeVersion = initialVersion.get();
             } else {
-                filePath = rootLocation.resolve(storedPath).normalize();
+                throw new RuntimeException("다운로드할 수 있는 파일 버전이 없습니다.");
             }
+        }
+
+        Path filePath;
+        String storedPath = activeVersion.getStoredPath();
+        if (Files.exists(versionLocation.resolve(storedPath))) {
+            filePath = versionLocation.resolve(storedPath).normalize();
         } else {
-            filePath = rootLocation.resolve(file.getStoredName()).normalize();
+            filePath = rootLocation.resolve(storedPath).normalize();
         }
 
         try {
@@ -184,6 +209,40 @@ public class FileService {
         } catch (MalformedURLException e) {
             throw new RuntimeException("파일 경로가 올바르지 않습니다: " + file.getOriginalName(), e);
         }
+    }
+
+    @Transactional
+    public void restoreVersion(Long fileId, Long versionId, String username) throws IOException {
+
+        // 새로운 '활성 버전' 방식의 복원 로직
+        User user = userRepository.findByUsername(username)
+                .orElseThrow(() -> new IllegalArgumentException("사용자를 찾을 수 없습니다."));
+        FileEntity file = fileRepository.findById(fileId)
+                .orElseThrow(() -> new RuntimeException("파일을 찾을 수 없습니다."));
+
+        checkFileEditPermission(file, user);
+
+        FileVersion versionToRestore = fileVersionRepository.findById(versionId)
+                .orElseThrow(() -> new RuntimeException("복원할 버전을 찾을 수 없습니다."));
+
+        // 단순히 파일의 활성 버전을 선택한 버전으로 변경
+        file.setActiveVersion(versionToRestore);
+
+        // 복원된 버전의 파일 크기로 업데이트
+        String storedPath = versionToRestore.getStoredPath();
+        Path filePath;
+        if (Files.exists(versionLocation.resolve(storedPath))) {
+            filePath = versionLocation.resolve(storedPath);
+        } else {
+            filePath = rootLocation.resolve(storedPath);
+        }
+        file.setSize(Files.size(filePath));
+
+        fileRepository.save(file);
+
+        // 활성 내용이 변경되었으므로 서명을 무효화
+        signatureService.invalidateSignatures(file);
+
     }
 
     @Transactional(readOnly = true)
@@ -377,59 +436,6 @@ public class FileService {
         }
     }
 
-    @Transactional
-    public void restoreVersion(Long fileId, Long versionId, String username) throws IOException {
-        User user = userRepository.findByUsername(username)
-                .orElseThrow(() -> new IllegalArgumentException("사용자를 찾을 수 없습니다."));
-        FileEntity file = fileRepository.findById(fileId)
-                .orElseThrow(() -> new RuntimeException("파일을 찾을 수 없습니다."));
-
-        // 1. 복원 대상이 되는 과거 버전을 가져옵니다.
-        FileVersion versionToRestore = fileVersionRepository.findById(versionId)
-                .orElseThrow(() -> new RuntimeException("복원할 버전을 찾을 수 없습니다."));
-
-        // 2. 현재 가장 최신 버전을 가져옵니다.
-        FileVersion latestVersion = fileVersionRepository.findTopByFileOrderByVersionIdDesc(file)
-                .orElseThrow(() -> new IllegalStateException("최신 파일 버전을 찾을 수 없습니다."));
-
-        checkFileEditPermission(file, user);
-
-        // 3. 복원할 버전의 실제 파일 경로(source)를 찾습니다. (초기/수정 버전 경로 모두 고려)
-        String pathToRestore = versionToRestore.getStoredPath();
-        Path sourcePath;
-        if (Files.exists(versionLocation.resolve(pathToRestore))) {
-            sourcePath = versionLocation.resolve(pathToRestore);
-        } else {
-            sourcePath = rootLocation.resolve(pathToRestore);
-        }
-
-        if (!Files.exists(sourcePath)) {
-            throw new IOException("복원할 원본 버전 파일을 찾을 수 없습니다: " + pathToRestore);
-        }
-
-        // --- [수정된 부분] ---
-        // 4. 덮어쓰기 대상인 최신 버전의 실제 파일 경로(destination)를 정확히 찾습니다.
-        String latestVersionStoredPath = latestVersion.getStoredPath();
-        Path destinationPath;
-        if (Files.exists(versionLocation.resolve(latestVersionStoredPath))) {
-            destinationPath = versionLocation.resolve(latestVersionStoredPath);
-        } else {
-            destinationPath = rootLocation.resolve(latestVersionStoredPath);
-        }
-
-        if (!Files.exists(destinationPath)) {
-            throw new IOException("최신 버전의 파일을 찾을 수 없어 덮어쓸 수 없습니다: " + latestVersionStoredPath);
-        }
-
-        // 5. 최신 버전 파일을 선택한 과거 버전의 내용으로 덮어씁니다.
-        Files.copy(sourcePath, destinationPath, StandardCopyOption.REPLACE_EXISTING);
-
-        // 6. 파일 크기를 업데이트하고 서명을 무효화합니다. (새 버전 기록은 생성하지 않음)
-        file.setSize(Files.size(destinationPath));
-        fileRepository.save(file);
-        signatureService.invalidateSignatures(file);
-    }
-
     @Transactional(readOnly = true)
     public List<FileSearchResultDto> searchFiles(String query, Long teamId, String username) {
         User user = userRepository.findByUsername(username).orElseThrow(() -> new IllegalArgumentException("사용자를 찾을 수 없습니다."));
@@ -449,7 +455,8 @@ public class FileService {
     }
 
     private void findFilesRecursive(Folder currentFolder, String query, String currentPath, List<FileSearchResultDto> results) {
-        fileRepository.findByFolderAndOriginalNameContainingIgnoreCase(currentFolder, query)
+        // 삭제된 파일을 제외하고 검색하는 새 메서드를 호출하도록 변경
+        fileRepository.findByFolderAndOriginalNameContainingIgnoreCaseAndIsDeletedFalse(currentFolder, query)
                 .stream()
                 .map(file -> new FileSearchResultDto(file, currentPath))
                 .forEach(results::add);
@@ -458,4 +465,5 @@ public class FileService {
             findFilesRecursive(subFolder, query, currentPath + "/" + subFolder.getName(), results);
         }
     }
+
 }
