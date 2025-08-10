@@ -191,7 +191,7 @@ const Header = ({ user, reloadMyTeams, onDeleteAccount }) => {
                             </div>
                             <ul className="py-1 max-h-96 overflow-y-auto">
                                 {notifications.length > 0 ? notifications.map(n => (
-                                    <li key={n.id} className="group px-3 py-2 text-sm text-gray-700 hover:bg-gray-50">
+                                    <li key={n.id} className="px-3 py-2 text-sm text-gray-700 hover:bg-gray-50">
                                         <div className="flex justify-between items-start">
                                             <div className="pr-2">
                                                 <p onClick={() => n.type !== 'TEAM_INVITE' && handleNotificationClick(n)}>{n.content}</p>
@@ -202,8 +202,9 @@ const Header = ({ user, reloadMyTeams, onDeleteAccount }) => {
                                                     </div>
                                                 )}
                                             </div>
-                                            <button onClick={() => handleDelete(n.id)} className="opacity-0 group-hover:opacity-100 text-gray-400 hover:text-red-500 p-1">
-                                                <Icon name="x" className="w-3 h-3" />
+
+                                            <button onClick={() => handleDelete(n.id)} className="text-gray-400 hover:text-red-500 p-1">
+                                                <img src="/js/images/delete_icon.png" alt="삭제" className="w-4 h-4" />
                                             </button>
                                         </div>
                                     </li>
@@ -657,7 +658,7 @@ const ChatPanel = ({ teamId, messages, onSendMessage, onFileUploadSuccess, usern
                         </React.Fragment>
                     );
                 })}
-                {/* --- [수정된 부분 끝] --- */}
+
                 <div ref={messagesEndRef} />
             </div>
             <form onSubmit={handleSendText} className="p-2 border-t flex items-center">
