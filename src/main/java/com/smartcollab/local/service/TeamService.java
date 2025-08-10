@@ -27,6 +27,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.io.IOException;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.stream.Collectors;
 
@@ -66,7 +67,7 @@ public class TeamService {
                 .build();
         teamRepository.save(newTeam);
 
-        // 팀 생성 시, 해당 팀의 루트 폴더를 함께 생성합니다.
+        // 팀 생성 시, 해당 팀의 루트 폴더를 함께 생성
         Folder teamRootFolder = Folder.builder()
                 .name(newTeam.getName() + "의 루트 폴더") // DB 식별용 이름
                 .owner(owner) // 팀 생성자를 폴더 소유자로 지정
@@ -75,7 +76,6 @@ public class TeamService {
                 .build();
         folderRepository.save(teamRootFolder);
 
-        // The creator automatically becomes the team leader with all permissions.
         TeamMember teamLeader = TeamMember.builder()
                 .team(newTeam)
                 .user(owner)
@@ -115,7 +115,7 @@ public class TeamService {
             throw new IllegalArgumentException("이미 팀에 속해있는 사용자입니다.");
         }
 
-        // 바로 팀원으로 추가하는 대신, 초대장을 생성합니다.
+        // 바로 팀원으로 추가하는 대신, 초대장을 생성
         Invitation invitation = Invitation.builder()
                 .team(team)
                 .inviter(inviter)
@@ -123,7 +123,7 @@ public class TeamService {
                 .build();
         invitationRepository.save(invitation);
 
-        // 초대받는 사람에게 알림을 보냅니다.
+        // 초대받는 사람에게 알림을 보냄
         String notificationContent = inviter.getName() + "님이 '" + team.getName() + "' 팀에 초대했습니다.";
         notificationService.createNotification(invitee, notificationContent, Notification.NotificationType.TEAM_INVITE, invitation);
     }
@@ -153,7 +153,7 @@ public class TeamService {
     public void updateMemberPermissions(Long teamId, Long memberId, UpdatePermissionRequestDto requestDto, UserDetails currentUserDetails) {
         User currentUser = userRepository.findByUsername(currentUserDetails.getUsername()).orElseThrow(() -> new IllegalArgumentException("사용자를 찾을 수 없습니다."));
         Team team = teamRepository.findById(teamId).orElseThrow(() -> new IllegalArgumentException("팀을 찾을 수 없습니다."));
-        // Only the team owner (leader) can update permissions.
+
         if (!team.getOwner().getUserId().equals(currentUser.getUserId())) {
             throw new SecurityException("팀원 권한을 수정할 권한이 없습니다.");
         }
@@ -161,8 +161,30 @@ public class TeamService {
         if (targetMember.isTeamLeader()) {
             throw new IllegalArgumentException("팀장의 권한은 변경할 수 없습니다.");
         }
+
+        // 권한 변경 전 상태를 기록
+        boolean oldCanEdit = targetMember.isCanEdit();
+        boolean oldCanDelete = targetMember.isCanDelete();
+        boolean oldCanInvite = targetMember.isCanInvite();
+
+
         targetMember.updatePermissions(requestDto.isCanEdit(), requestDto.isCanDelete(), requestDto.isCanInvite());
         teamMemberRepository.save(targetMember);
+
+        // 변경된 권한에 대한 알림 메시지를 생성하고 전송
+        List<String> changes = new ArrayList<>();
+        if (targetMember.isCanEdit() && !oldCanEdit) changes.add("편집 권한 부여");
+        if (!targetMember.isCanEdit() && oldCanEdit) changes.add("편집 권한 회수");
+        if (targetMember.isCanDelete() && !oldCanDelete) changes.add("삭제 권한 부여");
+        if (!targetMember.isCanDelete() && oldCanDelete) changes.add("삭제 권한 회수");
+        if (targetMember.isCanInvite() && !oldCanInvite) changes.add("초대 권한 부여");
+        if (!targetMember.isCanInvite() && oldCanInvite) changes.add("초대 권한 회수");
+
+        if (!changes.isEmpty()) {
+            String changesString = String.join(", ", changes);
+            String notificationContent = "'" + team.getName() + "' 팀의 권한이 변경되었습니다: " + changesString;
+            notificationService.createNotification(targetMember.getUser(), notificationContent, Notification.NotificationType.MENTION);
+        }
     }
 
     /**
@@ -191,7 +213,7 @@ public class TeamService {
     public void removeMember(Long teamId, Long memberId, UserDetails currentUserDetails) {
         User currentUser = userRepository.findByUsername(currentUserDetails.getUsername()).orElseThrow(() -> new IllegalArgumentException("사용자를 찾을 수 없습니다."));
         Team team = teamRepository.findById(teamId).orElseThrow(() -> new IllegalArgumentException("팀을 찾을 수 없습니다."));
-        // Only the team owner (leader) can remove members.
+
         if (!team.getOwner().getUserId().equals(currentUser.getUserId())) {
             throw new SecurityException("팀원 추방 권한이 없습니다.");
         }
@@ -199,7 +221,16 @@ public class TeamService {
         if (memberToRemove.isTeamLeader()) {
             throw new IllegalArgumentException("팀장은 추방할 수 없습니다.");
         }
+
+        // 팀 멤버 정보를 삭제하기 전에, 알림을 보낼 대상 유저 정보를 저장
+        User userToRemove = memberToRemove.getUser();
+
         teamMemberRepository.delete(memberToRemove);
+
+        // 추방당한 팀원에게 알림을 보냄
+        String notificationContent = "'" + team.getName() + "' 팀에서 추방되었습니다.";
+        notificationService.createNotification(userToRemove, notificationContent, Notification.NotificationType.MENTION);
+
     }
 
     /**
@@ -216,11 +247,11 @@ public class TeamService {
                 .filter(member -> member.getUser().getUserId().equals(currentUser.getUserId()))
                 .findFirst()
                 .orElseThrow(() -> new IllegalArgumentException("해당 팀의 멤버가 아닙니다."));
+
         if (memberToLeave.isTeamLeader()) {
             throw new IllegalArgumentException("팀장은 팀을 나갈 수 없습니다. 팀장 위임 또는 팀 폐쇄 기능을 이용해주세요.");
         }
 
-        // Team 엔티티의 멤버 리스트에서도 해당 멤버를 제거하여 관계를 명확히 끊어줍니다.
         team.getTeamMembers().remove(memberToLeave);
 
         teamMemberRepository.delete(memberToLeave);
@@ -232,20 +263,30 @@ public class TeamService {
                 .orElseThrow(() -> new IllegalArgumentException("사용자를 찾을 수 없습니다."));
         Team team = teamRepository.findById(teamId)
                 .orElseThrow(() -> new IllegalArgumentException("팀을 찾을 수 없습니다."));
+
         if (!team.getOwner().getUserId().equals(currentLeader.getUserId())) {
             throw new SecurityException("팀장만 위임할 수 있습니다.");
         }
         TeamMember memberToPromote = teamMemberRepository.findById(newLeaderMemberId)
                 .orElseThrow(() -> new IllegalArgumentException("새로운 팀장을 찾을 수 없습니다."));
+
         TeamMember currentLeaderMembership = team.getTeamMembers().stream()
                 .filter(m -> m.getUser().getUserId().equals(currentLeader.getUserId()))
                 .findFirst().orElseThrow();
+
         currentLeaderMembership.demoteFromLeader();
         memberToPromote.promoteToLeader();
         team.setOwner(memberToPromote.getUser());
+
         teamRepository.save(team);
         teamMemberRepository.save(currentLeaderMembership);
         teamMemberRepository.save(memberToPromote);
+
+        // --- [알림 추가] ---
+        // 새로 팀장이 된 사용자에게 알림을 보냅니다.
+        String notificationContent = "회원님은 '" + team.getName() + "' 팀의 새로운 팀장으로 임명되었습니다.";
+        notificationService.createNotification(memberToPromote.getUser(), notificationContent, Notification.NotificationType.MENTION);
+        // --- [알림 추가 끝] ---
     }
 
     /**
@@ -265,25 +306,25 @@ public class TeamService {
             throw new SecurityException("팀장만 팀을 삭제할 수 있습니다.");
         }
 
-        // 1. 이 팀과 관련된 모든 초대 기록을 가져옵니다.
+        // 1. 이 팀과 관련된 모든 초대 기록을 가져옴
         List<Invitation> invitations = team.getInvitations();
 
-        // 2. 이 초대 기록들을 참조하는 모든 알림을 먼저 삭제합니다.
+        // 2. 이 초대 기록들을 참조하는 모든 알림을 먼저 삭제
         for (Invitation invitation : invitations) {
             List<Notification> notifications = notificationRepository.findByInvitation(invitation);
             notificationRepository.deleteAll(notifications);
         }
 
-        // 3. 이제 초대 기록을 삭제합니다.
+        // 3. 이제 초대 기록을 삭제
         invitationRepository.deleteAll(invitations);
 
-        // 4. 팀의 모든 폴더와 파일을 삭제합니다.
+        // 4. 팀의 모든 폴더와 파일을 삭제
         List<Folder> rootFolders = folderRepository.findByTeamAndParentFolderIsNull(team);
         for (Folder rootFolder : rootFolders) {
             folderService.deleteFolderPermanently(rootFolder.getFolderId(), currentUser);
         }
 
-        // 5. 마지막으로 팀을 삭제합니다.
+        // 5. 마지막으로 팀을 삭제
         teamRepository.delete(team);
     }
 
@@ -305,7 +346,6 @@ public class TeamService {
         ChatMessage savedMessage = chatMessageRepository.save(message);
 
         chatMessageDto.setCreatedAt(savedMessage.getCreatedAt());
-
         messagingTemplate.convertAndSend(String.format("/topic/team/%s", teamId), chatMessageDto);
     }
 
