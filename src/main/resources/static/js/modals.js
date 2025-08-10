@@ -399,7 +399,7 @@ const VersionHistoryModal = ({ isOpen, onClose, file, onRestore }) => {
                     <table className="w-full text-sm text-left">
                         <thead className="bg-gray-50 sticky top-0">
                         <tr>
-                            <th className="p-3">버전 ID</th>
+                            <th className="p-3">작업자</th>
                             <th className="p-3">저장 시간</th>
                             <th className="p-3">작업</th>
                         </tr>
@@ -407,7 +407,7 @@ const VersionHistoryModal = ({ isOpen, onClose, file, onRestore }) => {
                         <tbody>
                         {history.map(ver => (
                             <tr key={ver.versionId} className="border-b">
-                                <td className="p-3">{ver.versionId}</td>
+                                <td className="p-3 font-semibold">{ver.editorName}</td>
                                 <td className="p-3">{new Date(ver.createdAt).toLocaleString()}</td>
                                 <td className="p-3">
                                     <button
