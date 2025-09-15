@@ -229,12 +229,23 @@ const Header = ({ user, reloadMyTeams, onDeleteAccount }) => {
     );
 };
 
-const Sidebar = ({ personalFolders, myTeams, onFolderSelect, onTeamSelect, onNewTeamClick, onReloadMyTeams }) => (
+const Sidebar = ({ personalFolders, myTeams, onFolderSelect, onTeamSelect, onNewTeamClick, onReloadMyTeams,
+                     activeContext, activePersonalRootId, selectedTeamContext}) => (
     <aside className="col-span-3 bg-white p-4 rounded-lg shadow">
         <h2 className="text-lg font-bold mb-4">내 드라이브</h2>
         <nav className="space-y-2">
             {personalFolders.map(folder => (
-                <a href="#" key={folder.id} onClick={(e) => { e.preventDefault(); onFolderSelect(folder); }} className="flex items-center p-2 space-x-2 text-gray-700 rounded-md hover:bg-gray-100">
+                <a
+                    href="#"
+                    key={folder.id}
+                    onClick={(e) => { e.preventDefault(); onFolderSelect(folder); }}
+                    className={`flex items-center p-2 space-x-2 text-gray-700 rounded-md hover:bg-gray-100 ${
+                        (activeContext?.type === 'personal' &&
+                            ((activePersonalRootId && folder.id === activePersonalRootId) ||
+                                (!activePersonalRootId && folder.id === activeContext?.id)))
+                            ? 'bg-gray-100' : ''
+                    }`}
+                >
                     <img src="/js/images/storage_icon.png" alt="storage" className="w-5 h-5" />
                     <span>{folder.name}</span>
                 </a>
@@ -254,7 +265,15 @@ const Sidebar = ({ personalFolders, myTeams, onFolderSelect, onTeamSelect, onNew
         </div>
         <div className="space-y-2">
             {myTeams.map(team => (
-                <a href="#" key={team.id} onClick={(e) => { e.preventDefault(); onTeamSelect(team); }} className="flex items-center p-2 space-x-2 text-gray-700 rounded-md hover:bg-gray-100">
+                <a
+                    href="#"
+                    key={team.id}
+                    onClick={(e) => { e.preventDefault(); onTeamSelect(team); }}
+                    className={`flex items-center p-2 space-x-2 text-gray-700 rounded-md hover:bg-gray-100 ${
+                        (activeContext?.type === 'team' && selectedTeamContext?.id === team.id)
+                            ? 'bg-gray-100' : ''
+                    }`}
+                >
                     <img src="/js/images/storage_icon.png" alt="team storage" className="w-5 h-5" />
                     <span>{team.name} ({team.memberCount}명)</span>
                 </a>
@@ -465,7 +484,7 @@ const CollaborationPanel = ({ user, teamContext, permissions, onInviteClick, onR
     const isCurrentUserLeader = user.username === teamContext.ownerUsername;
 
     return (
-        <aside className="col-span-3 bg-white rounded-lg shadow flex flex-col">
+        <aside className="col-span-3 bg-white rounded-lg shadow flex flex-col h-full">
             <div className="border-b">
                 <nav className="-mb-px flex space-x-4 px-4">
                     <button onClick={() => setActiveTab('members')} className={`${commonTabStyle} ${activeTab === 'members' ? activeTabStyle : inactiveTabStyle}`}>
@@ -522,15 +541,17 @@ const CollaborationPanel = ({ user, teamContext, permissions, onInviteClick, onR
             )}
 
             {activeTab === 'chat' && (
-                <ChatPanel
-                    teamId={teamContext.id}
-                    messages={chatMessages}
-                    onSendMessage={onSendMessage}
-                    onFileUploadSuccess={onFileUploadSuccess}
-                    username={user.username}
-                    isCurrentUserLeader={isCurrentUserLeader}
-                    onClearChatHistory={onClearChatHistory}
-                />
+                <div className="flex-grow min-h-0">
+                    <ChatPanel
+                        teamId={teamContext.id}
+                        messages={chatMessages}
+                        onSendMessage={onSendMessage}
+                        onFileUploadSuccess={onFileUploadSuccess}
+                        username={user.username}
+                        isCurrentUserLeader={isCurrentUserLeader}
+                        onClearChatHistory={onClearChatHistory}
+                    />
+                </div>
             )}
         </aside>
     );
